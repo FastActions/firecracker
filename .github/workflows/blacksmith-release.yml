@@ -1,0 +1,91 @@
+# Builds the Blacksmith Firecracker release for a `v<upstream>-bs<n>` tag and
+# publishes it as a GitHub release whose assets mirror the upstream layout:
+#
+#   firecracker-<tag>-<arch>.tgz
+#     release-<tag>-<arch>/firecracker-<tag>-<arch>
+#     release-<tag>-<arch>/jailer-<tag>-<arch>
+#     release-<tag>-<arch>/seccomp-filter-<tag>-<arch>.json
+#     release-<tag>-<arch>/SHA256SUMS
+#   firecracker-<tag>-<arch>.tgz.sha256.txt
+#
+# so FastActions/fa's infra/ansible/firecracker_install_tasks.yaml and
+# agent/testing/agenttest/setup-integration.sh only need the download base URL
+# and version string changed. Binaries are built with the upstream devctr
+# (`tools/devtool build --release`), i.e. static musl, same as upstream.
+name: blacksmith-release
+
+on:
+  push:
+    tags:
+      - "v*-bs*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: blacksmith-8vcpu-ubuntu-2404
+          - arch: aarch64
+            runner: blacksmith-8vcpu-ubuntu-2404-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build release binaries (devctr, static musl)
+        run: tools/devtool -y build --release
+
+      - name: Package
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+          [[ "${GITHUB_REF_TYPE}" == "tag" ]] || VERSION="$(git describe --tags --always)-dev"
+          OUT="build/cargo_target/${ARCH}-unknown-linux-musl/release"
+          file "${OUT}/firecracker" | grep -q "static" || { echo "firecracker is not statically linked" >&2; exit 1; }
+          "${OUT}/firecracker" --version | head -1
+          DIR="release-${VERSION}-${ARCH}"
+          mkdir -p "dist/${DIR}"
+          cp "${OUT}/firecracker" "dist/${DIR}/firecracker-${VERSION}-${ARCH}"
+          cp "${OUT}/jailer" "dist/${DIR}/jailer-${VERSION}-${ARCH}"
+          cp "resources/seccomp/${ARCH}-unknown-linux-musl.json" "dist/${DIR}/seccomp-filter-${VERSION}-${ARCH}.json"
+          cp LICENSE NOTICE THIRD-PARTY "dist/${DIR}/"
+          (cd "dist/${DIR}" && find . -type f -not -name SHA256SUMS | sort | xargs sha256sum > SHA256SUMS)
+          (cd dist && tar czf "firecracker-${VERSION}-${ARCH}.tgz" "${DIR}" \
+            && sha256sum "firecracker-${VERSION}-${ARCH}.tgz" > "firecracker-${VERSION}-${ARCH}.tgz.sha256.txt" \
+            && cat "firecracker-${VERSION}-${ARCH}.tgz.sha256.txt")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firecracker-${{ matrix.arch }}
+          path: |
+            dist/*.tgz
+            dist/*.sha256.txt
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ls -l dist
+          UPSTREAM="${GITHUB_REF_NAME%-bs*}"
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "Firecracker ${GITHUB_REF_NAME}" \
+            --notes "Upstream Firecracker ${UPSTREAM} plus the Blacksmith patches on the \`blacksmith/${UPSTREAM}\` branch (vhost-user-blk discard negotiation). Built with \`tools/devtool build --release\`."
