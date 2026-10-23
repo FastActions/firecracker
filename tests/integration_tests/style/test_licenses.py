@@ -121,6 +121,9 @@ def test_for_valid_licenses():
     all_files = rust_files + python_files + bash_files + c_files
     error_msg = []
     for file in all_files:
+        # Vendored third-party crate, see src/fasttrace/PROVENANCE.md.
+        if "src/fasttrace/" in str(file):
+            continue
         if _validate_license(file) is False:
             error_msg.append(file)
     assert not error_msg, f"Files {error_msg} have invalid licenses"
