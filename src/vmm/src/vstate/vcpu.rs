@@ -21,6 +21,7 @@ use vmm_sys_util::eventfd::EventFd;
 use crate::FcExitCode;
 pub use crate::arch::{KvmVcpu, KvmVcpuConfigureError, KvmVcpuError, Peripherals, VcpuState};
 use crate::cpu_config::templates::{CpuConfiguration, GuestConfigError};
+use crate::fasttrace_points as tp;
 #[cfg(feature = "gdb")]
 use crate::gdb::target::{GdbTargetError, get_raw_tid};
 use crate::logger::{IncMetric, METRICS, error, info, warn};
@@ -427,7 +428,10 @@ impl Vcpu {
 
                 Ok(VcpuEmulation::Paused)
             }
-            emulation_result => handle_kvm_exit(&mut self.kvm_vcpu.peripherals, emulation_result),
+            emulation_result => {
+                let _exit = tp::vcpu_exit_span(self.kvm_vcpu.index, &emulation_result);
+                handle_kvm_exit(&mut self.kvm_vcpu.peripherals, emulation_result)
+            }
         }
     }
 }

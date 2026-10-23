@@ -41,6 +41,19 @@ pub enum RequestType {
     Unsupported(u32),
 }
 
+impl From<RequestType> for u32 {
+    fn from(value: RequestType) -> Self {
+        match value {
+            RequestType::In => VIRTIO_BLK_T_IN,
+            RequestType::Out => VIRTIO_BLK_T_OUT,
+            RequestType::Discard => VIRTIO_BLK_T_DISCARD,
+            RequestType::Flush => VIRTIO_BLK_T_FLUSH,
+            RequestType::GetDeviceID => VIRTIO_BLK_T_GET_ID,
+            RequestType::Unsupported(t) => t,
+        }
+    }
+}
+
 impl From<u32> for RequestType {
     fn from(value: u32) -> Self {
         match value {
@@ -397,6 +410,15 @@ impl Request {
         self.data_len = byte_len;
 
         Ok(())
+    }
+
+    /// Byte offset of the request on the disk. Discard requests carry a byte
+    /// offset in `sector`; every other type a sector number.
+    pub fn offset_bytes(&self) -> u64 {
+        match self.r#type {
+            RequestType::Discard => self.sector,
+            _ => self.sector << SECTOR_SHIFT,
+        }
     }
 
     pub(crate) fn rate_limit(&self, rate_limiter: &mut RateLimiter) -> bool {
@@ -892,19 +914,6 @@ mod tests {
                     })),
                 ),
             ))
-        }
-    }
-
-    impl From<RequestType> for u32 {
-        fn from(request_type: RequestType) -> u32 {
-            match request_type {
-                RequestType::In => VIRTIO_BLK_T_IN,
-                RequestType::Out => VIRTIO_BLK_T_OUT,
-                RequestType::Discard => VIRTIO_BLK_T_DISCARD,
-                RequestType::Flush => VIRTIO_BLK_T_FLUSH,
-                RequestType::GetDeviceID => VIRTIO_BLK_T_GET_ID,
-                RequestType::Unsupported(id) => id,
-            }
         }
     }
 
