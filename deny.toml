@@ -8,6 +8,8 @@ unsound = "all"
 
 [licenses]
 version = 2
+# src/fasttrace is vendored from a private repository (publish = false).
+private = { ignore = true }
 allow = [
     "MIT",
     "Apache-2.0",

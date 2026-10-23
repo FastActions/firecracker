@@ -6,6 +6,7 @@
 // found in the THIRD-PARTY file.
 
 use std::fmt::Debug;
+use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Barrier, Mutex, MutexGuard};
 
@@ -15,6 +16,7 @@ use super::{VirtioInterrupt, VirtioInterruptType};
 use crate::devices::virtio::device::VirtioDevice;
 use crate::devices::virtio::device_status;
 use crate::devices::virtio::queue::Queue;
+use crate::fasttrace_points as tp;
 use crate::logger::{IncMetric, METRICS, error, warn};
 use crate::utils::byte_order;
 use crate::vstate::bus::BusDevice;
@@ -260,13 +262,15 @@ impl BusDevice for MmioTransport {
                         // `VIRTIO_MMIO_INT_CONFIG` or
                         // `VIRTIO_MMIO_INT_VRING`.
                         let is = self.interrupt.irq_status.load(Ordering::SeqCst);
-                        if !self.is_vhost_user {
+                        let is = if !self.is_vhost_user {
                             is
                         } else if is == VIRTIO_MMIO_INT_CONFIG {
                             VIRTIO_MMIO_INT_CONFIG
                         } else {
                             VIRTIO_MMIO_INT_VRING
-                        }
+                        };
+                        tp::ISR_READ.instant([self.interrupt.dev_key(), u64::from(is)]);
+                        is
                     }
                     0x70 => self.device_status,
                     0xfc => self.config_generation,
@@ -323,6 +327,7 @@ impl BusDevice for MmioTransport {
                     0x44 => self.update_queue_field(|q| q.ready = v == 1),
                     0x64 => {
                         if self.check_device_status(device_status::DRIVER_OK, 0) {
+                            tp::ISR_ACK.instant([self.interrupt.dev_key(), u64::from(v)]);
                             self.interrupt.irq_status.fetch_and(!v, Ordering::SeqCst);
                         }
                     }
@@ -451,12 +456,24 @@ impl IrqTrigger {
         }
     }
 
+    /// Identifies this device in trace points: the irq eventfd number, which
+    /// is unique per live device within the process.
+    pub(crate) fn dev_key(&self) -> u64 {
+        // Open file descriptors are non-negative.
+        self.irq_evt.as_raw_fd().unsigned_abs().into()
+    }
+
     fn trigger_irq(&self, irq_type: IrqType) -> Result<(), InterruptError> {
         let irq = match irq_type {
             IrqType::Config => VIRTIO_MMIO_INT_CONFIG,
             IrqType::Vring => VIRTIO_MMIO_INT_VRING,
         };
-        self.irq_status.fetch_or(irq, Ordering::SeqCst);
+        let status = self.irq_status.fetch_or(irq, Ordering::SeqCst) | irq;
+        tp::IRQ.instant([
+            self.dev_key(),
+            u64::from(irq == VIRTIO_MMIO_INT_VRING),
+            u64::from(status),
+        ]);
 
         self.irq_evt.write(1).map_err(|err| {
             error!("Failed to send irq to the guest: {:?}", err);

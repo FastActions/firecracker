@@ -38,6 +38,7 @@ use crate::devices::virtio::transport::{VirtioInterrupt, VirtioInterruptType};
 use crate::devices::{DeviceError, report_net_event_fail};
 use crate::dumbo::pdu::arp::ETH_IPV4_FRAME_LEN;
 use crate::dumbo::pdu::ethernet::{EthernetFrame, PAYLOAD_OFFSET};
+use crate::fasttrace_points as tp;
 use crate::impl_device_type;
 use crate::logger::{IncMetric, METRICS, error, warn};
 use crate::mmds::data_store::Mmds;
@@ -683,6 +684,7 @@ impl Net {
 
     /// Read as many frames as possible.
     fn process_rx(&mut self) -> Result<(), DeviceError> {
+        let _rx = tp::NET_RX.span([RX_INDEX as u64]);
         loop {
             match self.read_from_mmds_or_tap() {
                 Ok(None) => {
@@ -746,6 +748,7 @@ impl Net {
         let mut process_rx_for_mmds = false;
         let mut used_any = false;
         let tx_queue = &mut self.queues[TX_INDEX];
+        let tx_span = tp::NET_TX.span([TX_INDEX as u64]);
 
         while let Some(head) = tx_queue.pop_or_enable_notification()? {
             self.metrics
@@ -779,6 +782,7 @@ impl Net {
                 break;
             }
 
+            tp::NET_TX_FRAME.instant([u64::from(head_index), u64::from(self.tx_buffer.len())]);
             let frame_consumed_by_mmds = Self::write_to_mmds_or_tap(
                 self.mmds_ns.as_mut(),
                 &mut self.tx_rate_limiter,
@@ -807,6 +811,7 @@ impl Net {
         self.try_signal_queue(NetQueue::Tx)?;
 
         // An incoming frame for the MMDS may trigger the transmission of a new message.
+        tx_span.end([]);
         if process_rx_for_mmds {
             self.process_rx()
         } else {
