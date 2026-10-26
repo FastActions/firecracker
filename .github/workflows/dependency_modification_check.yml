@@ -8,6 +8,8 @@ permissions:
 
 jobs:
   dependency_changed_check:
+    # Blacksmith branches carry vendored crates, so Cargo.lock changes there.
+    if: ${{ !startsWith(github.base_ref, 'blacksmith/') }}
     runs-on: ubuntu-latest
     steps:
       - name: "Checkout repository"

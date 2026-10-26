@@ -1,0 +1,22 @@
+[package]
+name = "fasttrace"
+version = "0.1.0"
+edition = "2021"
+description = "Sub-100 ns in-process tracing: cacheline-sized integer records in per-thread rings plus a registry that gives the ints meaning"
+license = "UNLICENSED"
+publish = false
+
+[lib]
+name = "fasttrace"
+path = "src/lib.rs"
+
+[[bin]]
+name = "fasttrace-dump"
+path = "src/bin/fasttrace-dump.rs"
+
+[dependencies]
+# gettid, clock_gettime, sched_getcpu (hot path uses none of these).
+libc = "0.2"
+# Raw-file registry blob and the Chrome/Perfetto JSON export. Consumer side only.
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }

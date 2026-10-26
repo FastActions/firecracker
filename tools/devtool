@@ -403,12 +403,14 @@ cmd_help() {
     echo ""
     echo "Available commands:"
     echo ""
-    echo "    build [--debug|--release] [-l|--libc musl|gnu]"
+    echo "    build [--debug|--release] [-l|--libc musl|gnu] [--features <list>]"
     echo "        Build the Firecracker binaries."
     echo "        Firecracker is built using the Rust build system (cargo). All arguments after --"
     echo "        will be passed through to cargo."
     echo "        --debug               Build the debug binaries. This is the default."
     echo "        --release             Build the release binaries."
+    echo "        --features <list>     Enable the given cargo features, e.g."
+    echo "                              --features firecracker/fasttrace."
     echo "        -l, --libc musl|gnu   Choose the libc flavor against which Firecracker will"
     echo "                              be linked. Default is musl."
     echo "        --ssh-keys            Provide the paths to the public and private SSH keys on the host"
@@ -539,6 +541,7 @@ cmd_build() {
             "--debug")      { profile="debug";      } ;;
             "--release")    { profile="release";    } ;;
             "--rev")       { shift; revision=$1; } ;;
+            "--features")   { shift; features="$1";  } ;;
             "--ssh-keys")
                 shift
                 [[ -z "$1" ]] && \
@@ -599,7 +602,8 @@ cmd_build() {
         --workdir "$workdir" \
         ${extra_args} \
         -- \
-        ./tools/release.sh --libc $libc --profile $profile
+        ./tools/release.sh --libc $libc --profile $profile \
+            ${features:+--features "$features"}
     ret=$?
 
     # Running as root would have created some root-owned files under the build

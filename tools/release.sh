@@ -64,6 +64,7 @@ function get-firecracker-version {
 LIBC=musl
 PROFILE=dev
 MAKE_RELEASE=
+FEATURES=
 
 #### Option parsing
 
@@ -76,6 +77,7 @@ $0 - Build Firecracker
    --profile PROFILE  - Build with the specified Rust profile (default: dev)
    --libc [musl|gnu]  - Build with the specified libc (default: musl)
    --make-release     - Make release artifacts
+   --features LIST    - Enable the given cargo features (e.g. firecracker/fasttrace)
 EOF
           exit 0
       ;;
@@ -90,6 +92,10 @@ EOF
     --make-release)
       MAKE_RELEASE=true
       shift 1
+      ;;
+    --features)
+      FEATURES="$2"
+      shift 2
       ;;
     *)
       echo "Unknown option $1"
@@ -120,6 +126,9 @@ CARGO_OPTS=""
 # We could use Cargo's --profile when that's stable
 if [ "$PROFILE" = "release" ]; then
     CARGO_OPTS+=" --release"
+fi
+if [ -n "$FEATURES" ]; then
+    CARGO_OPTS+=" --features $FEATURES"
 fi
 
 ARTIFACTS=(firecracker jailer seccompiler-bin rebase-snap cpu-template-helper snapshot-editor)

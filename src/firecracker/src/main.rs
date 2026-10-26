@@ -121,6 +121,7 @@ fn main() -> ExitCode {
 fn main_exec() -> Result<(), MainError> {
     // Initialize the logger.
     LOGGER.init().map_err(MainError::SetLogger)?;
+    vmm::fasttrace_points::init();
 
     // First call to this function updates the value to current
     // host page size.

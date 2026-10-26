@@ -83,6 +83,8 @@ pub(crate) mod device_manager;
 pub mod devices;
 /// minimalist HTTP/TCP/IPv4 stack named DUMBO
 pub mod dumbo;
+/// Fixed-cost trace points on the guest IO path (`fasttrace` feature).
+pub mod fasttrace_points;
 /// Support for GDB debugging the guest
 #[cfg(feature = "gdb")]
 pub mod gdb;
@@ -768,6 +770,7 @@ impl Drop for Vmm {
             info!("Killing vCPU threads");
             kvm_vm.shutdown_vcpus();
         }
+        fasttrace_points::dump_if_requested();
 
         if let Err(err) = std::io::stdin().lock().set_canon_mode() {
             warn!("Cannot set canonical mode for the terminal. {:?}", err);

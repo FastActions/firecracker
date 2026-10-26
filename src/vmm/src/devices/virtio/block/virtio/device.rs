@@ -39,6 +39,7 @@ use crate::devices::virtio::generated::virtio_config::VIRTIO_F_VERSION_1;
 use crate::devices::virtio::generated::virtio_ring::VIRTIO_RING_F_EVENT_IDX;
 use crate::devices::virtio::queue::{InvalidAvailIdx, Queue};
 use crate::devices::virtio::transport::{VirtioInterrupt, VirtioInterruptType};
+use crate::fasttrace_points as tp;
 use crate::impl_device_type;
 use crate::logger::{IncMetric, error, warn};
 use crate::rate_limiter::{BucketUpdate, RateLimiter};
@@ -531,6 +532,7 @@ impl VirtioBlock {
     /// This function is called by the event manager when the guest notifies us
     /// about new buffers in the queue.
     pub(crate) fn process_queue_event(&mut self) {
+        let _kick = tp::BLK_KICK.span([0]);
         self.metrics.queue_event_count.inc();
         if let Err(err) = self.queue_evts[0].read() {
             error!("Failed to get queue event: {:?}", err);
@@ -560,6 +562,7 @@ impl VirtioBlock {
 
     /// Device specific function for peaking inside a queue and processing descriptors.
     pub fn process_queue(&mut self, queue_index: usize) -> Result<(), InvalidAvailIdx> {
+        let dev = std::ptr::from_ref(self) as usize;
         // This is safe since we checked in the event handler that the device is activated.
         let active_state = self.device_state.active_state().unwrap();
 
@@ -568,6 +571,7 @@ impl VirtioBlock {
 
         while let Some(head) = queue.pop_or_enable_notification()? {
             self.metrics.remaining_reqs_count.add(queue.len().into());
+            let mut traced = false;
             let processing_result =
                 match Request::parse(&head, &active_state.mem, self.disk.nsectors) {
                     Ok(request) => {
@@ -578,6 +582,14 @@ impl VirtioBlock {
                             self.metrics.rate_limiter_throttled_events.inc();
                             break;
                         }
+                        traced = true;
+                        tp::BLK_POP.instant([
+                            tp::blk_key(dev, queue_index, head.index),
+                            u64::from(u32::from(request.r#type)),
+                            request.offset_bytes(),
+                            u64::from(request.data_len),
+                            queue_index as u64,
+                        ]);
 
                         request.process(
                             &mut self.disk,
@@ -600,12 +612,19 @@ impl VirtioBlock {
             match processing_result {
                 ProcessingResult::Submitted => {}
                 ProcessingResult::Throttled => {
+                    tp::BLK_THROTTLED.instant([tp::blk_key(dev, queue_index, head.index)]);
                     queue.undo_pop();
                     self.is_io_engine_throttled = true;
                     break;
                 }
                 ProcessingResult::Executed(finished) => {
                     used_any = true;
+                    if traced {
+                        tp::BLK_USED.instant([
+                            tp::blk_key(dev, queue_index, head.index),
+                            u64::from(finished.num_bytes_to_mem),
+                        ]);
+                    }
                     queue
                         .add_used(head.index, finished.num_bytes_to_mem)
                         .unwrap_or_else(|err| {
@@ -642,11 +661,13 @@ impl VirtioBlock {
     }
 
     fn process_async_completion_queue(&mut self) {
+        let dev = std::ptr::from_ref(self) as usize;
         let engine = unwrap_async_file_engine_or_return!(&mut self.disk.file_engine);
 
         // This is safe since we checked in the event handler that the device is activated.
         let active_state = self.device_state.active_state().unwrap();
         let queue = &mut self.queues[0];
+        let _completion = tp::BLK_COMPLETION.span([0]);
 
         loop {
             match engine.pop(&active_state.mem) {
@@ -669,6 +690,10 @@ impl VirtioBlock {
                         ),
                     };
                     let finished = pending.finish(&active_state.mem, res, &self.metrics);
+                    tp::BLK_USED.instant([
+                        tp::blk_key(dev, 0, finished.desc_idx),
+                        u64::from(finished.num_bytes_to_mem),
+                    ]);
                     queue
                         .add_used(finished.desc_idx, finished.num_bytes_to_mem)
                         .unwrap_or_else(|err| {
