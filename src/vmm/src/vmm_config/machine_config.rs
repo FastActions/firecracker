@@ -29,6 +29,9 @@ pub enum MachineConfigError {
     SmtNotSupported,
     /// Could not determine host kernel version when checking hugetlbfs compatibility
     KernelVersion,
+    /// Exposing the performance monitoring unit to the guest is not supported on aarch64.
+    #[cfg(target_arch = "aarch64")]
+    PmuNotSupported,
 }
 
 /// Describes the possible (huge)page configurations for a microVM's memory.
@@ -128,6 +131,11 @@ pub struct MachineConfig {
     /// Configures what page size Firecracker should use to back guest memory.
     #[serde(default)]
     pub huge_pages: HugePageConfig,
+    /// Exposes the host's performance monitoring unit to the guest through KVM's vPMU. Off by
+    /// default: the VM is created with `KVM_PMU_CAP_DISABLE`, so the guest sees no hardware
+    /// performance counters. Only supported on x86_64.
+    #[serde(default)]
+    pub pmu: bool,
     /// GDB socket address.
     #[cfg(feature = "gdb")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -170,6 +178,7 @@ impl Default for MachineConfig {
             cpu_template: None,
             track_dirty_pages: false,
             huge_pages: HugePageConfig::None,
+            pmu: false,
             #[cfg(feature = "gdb")]
             gdb_socket_path: None,
         }
@@ -203,6 +212,9 @@ pub struct MachineConfigUpdate {
     /// Configures what page size Firecracker should use to back guest memory.
     #[serde(default)]
     pub huge_pages: Option<HugePageConfig>,
+    /// Exposes the host's performance monitoring unit to the guest.
+    #[serde(default)]
+    pub pmu: Option<bool>,
     /// GDB socket address.
     #[cfg(feature = "gdb")]
     #[serde(default)]
@@ -227,6 +239,7 @@ impl From<MachineConfig> for MachineConfigUpdate {
             cpu_template: cfg.static_template(),
             track_dirty_pages: Some(cfg.track_dirty_pages),
             huge_pages: Some(cfg.huge_pages),
+            pmu: Some(cfg.pmu),
             #[cfg(feature = "gdb")]
             gdb_socket_path: cfg.gdb_socket_path,
         }
@@ -287,6 +300,13 @@ impl MachineConfig {
             Some(other) => Some(CpuTemplateType::Static(other)),
         };
 
+        let pmu = update.pmu.unwrap_or(self.pmu);
+
+        #[cfg(target_arch = "aarch64")]
+        if pmu {
+            return Err(MachineConfigError::PmuNotSupported);
+        }
+
         Ok(MachineConfig {
             vcpu_count,
             mem_size_mib,
@@ -294,6 +314,7 @@ impl MachineConfig {
             cpu_template,
             track_dirty_pages: update.track_dirty_pages.unwrap_or(self.track_dirty_pages),
             huge_pages: page_config,
+            pmu,
             #[cfg(feature = "gdb")]
             gdb_socket_path: update.gdb_socket_path.clone(),
         })
@@ -303,7 +324,30 @@ impl MachineConfig {
 #[cfg(test)]
 mod tests {
     use crate::cpu_config::templates::{CpuTemplateType, CustomCpuTemplate, StaticCpuTemplate};
-    use crate::vmm_config::machine_config::MachineConfig;
+    use crate::vmm_config::machine_config::{MachineConfig, MachineConfigUpdate};
+
+    #[test]
+    fn test_pmu_defaults_to_disabled() {
+        let mconfig =
+            serde_json::from_str::<MachineConfig>(r#"{"vcpu_count": 2, "mem_size_mib": 128}"#)
+                .unwrap();
+        assert!(!mconfig.pmu);
+
+        let update = serde_json::from_str::<MachineConfigUpdate>(r#"{"pmu": true}"#).unwrap();
+        assert_eq!(update.pmu, Some(true));
+        let updated = mconfig.update(&update);
+        #[cfg(target_arch = "x86_64")]
+        assert!(updated.unwrap().pmu);
+        #[cfg(target_arch = "aarch64")]
+        assert_eq!(
+            updated.unwrap_err(),
+            crate::vmm_config::machine_config::MachineConfigError::PmuNotSupported
+        );
+
+        // An update that does not mention the PMU keeps the current setting.
+        let unchanged = mconfig.update(&MachineConfigUpdate::default()).unwrap();
+        assert!(!unchanged.pmu);
+    }
 
     // Ensure the special (de)serialization logic for the cpu_template field works:
     // only static cpu templates can be specified via the machine-config endpoint, but

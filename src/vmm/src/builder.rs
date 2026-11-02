@@ -176,6 +176,10 @@ pub fn build_microvm_for_boot(
     // Set up KVM VM and register memory regions.
     // Build custom CPU config if a custom template is provided.
     let mut vm = KvmVm::new(kvm)?;
+    #[cfg(target_arch = "x86_64")]
+    if !vm_resources.machine_config.pmu {
+        vm.disable_pmu().map_err(VmError::Arch)?;
+    }
     let mut vcpus = vm.create_vcpus(vm_resources.machine_config.vcpu_count)?;
     vm.register_dram_memory_regions(guest_memory)?;
 
@@ -442,6 +446,11 @@ pub fn build_microvm_from_snapshot(
     // Set up KVM VM and register memory regions.
     // Build custom CPU config if a custom template is provided.
     let mut vm = KvmVm::new(kvm).map_err(StartMicrovmError::KvmVm)?;
+    #[cfg(target_arch = "x86_64")]
+    if !vm_resources.machine_config.pmu {
+        vm.disable_pmu()
+            .map_err(|err| StartMicrovmError::KvmVm(VmError::Arch(err)))?;
+    }
 
     let mut vcpus = vm
         .create_vcpus(vm_resources.machine_config.vcpu_count)
