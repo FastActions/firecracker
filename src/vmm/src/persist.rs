@@ -59,6 +59,9 @@ pub struct VmInfo {
     pub boot_source: BootSourceConfig,
     /// Huge page configuration
     pub huge_pages: HugePageConfig,
+    /// Whether the guest was given the hardware PMU.
+    #[serde(default)]
+    pub pmu: bool,
 }
 
 impl From<&VmResources> for VmInfo {
@@ -69,6 +72,7 @@ impl From<&VmResources> for VmInfo {
             cpu_template: StaticCpuTemplate::from(&value.machine_config.cpu_template),
             boot_source: value.boot_source.config.clone(),
             huge_pages: value.machine_config.huge_pages,
+            pmu: value.machine_config.pmu,
         }
     }
 }
@@ -82,6 +86,7 @@ impl From<&Vmm> for VmInfo {
             cpu_template: StaticCpuTemplate::from(&machine_config.cpu_template),
             boot_source: value.boot_source_config.clone(),
             huge_pages: machine_config.huge_pages,
+            pmu: machine_config.pmu,
         }
     }
 }
@@ -441,6 +446,7 @@ pub fn restore_from_snapshot(
             cpu_template: Some(microvm_state.vm_info.cpu_template),
             track_dirty_pages: Some(track_dirty_pages),
             huge_pages: Some(params.huge_pages.resolve(microvm_state.vm_info.huge_pages)),
+            pmu: Some(microvm_state.vm_info.pmu),
             #[cfg(feature = "gdb")]
             gdb_socket_path: None,
         })

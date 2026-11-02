@@ -5,13 +5,15 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use kvm_bindings::{
-    KVM_CLOCK_REALTIME, KVM_IRQCHIP_IOAPIC, KVM_IRQCHIP_PIC_MASTER, KVM_IRQCHIP_PIC_SLAVE,
-    KVM_PIT_SPEAKER_DUMMY, MsrList, kvm_clock_data, kvm_irqchip, kvm_pit_config, kvm_pit_state2,
+    KVM_CAP_PMU_CAPABILITY, KVM_CLOCK_REALTIME, KVM_IRQCHIP_IOAPIC, KVM_IRQCHIP_PIC_MASTER,
+    KVM_IRQCHIP_PIC_SLAVE, KVM_PIT_SPEAKER_DUMMY, KVM_PMU_CAP_DISABLE, MsrList, kvm_clock_data,
+    kvm_enable_cap, kvm_irqchip, kvm_pit_config, kvm_pit_state2,
 };
 use kvm_ioctls::Cap;
 use serde::{Deserialize, Serialize};
 
 use crate::arch::x86_64::msr::MsrError;
+use crate::logger::warn;
 use crate::snapshot::Persist;
 use crate::utils::u64_to_usize;
 use crate::vstate::bus::Bus;
@@ -53,6 +55,8 @@ pub enum KvmVmError {
     SetTssAddress(kvm_ioctls::Error),
     /// Failed to restore resource allocator: {0}
     ResourceAllocator(#[from] vm_allocator::Error),
+    /// Failed to disable the PMU for the VM: {0}
+    DisablePmu(kvm_ioctls::Error),
 }
 
 /// Structure representing the current architecture's understand of what a "virtual machine" is.
@@ -117,6 +121,37 @@ impl KvmVm {
     pub fn arch_pre_create_vcpus(&mut self, _: u8) -> Result<(), KvmVmError> {
         // For x86_64 we need to create the interrupt controller before calling `KVM_CREATE_VCPUS`
         self.setup_irqchip()
+    }
+
+    /// Withholds the hardware PMU from the guest: KVM's vPMU is turned off for this VM, so the
+    /// guest's CPUID and PMU MSRs show no performance counters. Must run before any vCPU is
+    /// created, as KVM rejects the capability afterwards.
+    ///
+    /// `KVM_CAP_PMU_CAPABILITY` reads as 0 both when the host already runs without a vPMU
+    /// (`kvm.enable_pmu=0`) and on kernels before 5.18 that cannot withhold it; the two cannot
+    /// be told apart here, so that case is logged and left alone.
+    pub fn disable_pmu(&self) -> Result<(), KvmVmError> {
+        if self
+            .common
+            .fd
+            .check_extension_raw(u64::from(KVM_CAP_PMU_CAPABILITY))
+            == 0
+        {
+            warn!(
+                "KVM_CAP_PMU_CAPABILITY is unavailable: the host either runs without a vPMU or \
+                 its kernel cannot withhold the PMU from the guest"
+            );
+            return Ok(());
+        }
+        let cap = kvm_enable_cap {
+            cap: KVM_CAP_PMU_CAPABILITY,
+            args: [u64::from(KVM_PMU_CAP_DISABLE), 0, 0, 0],
+            ..Default::default()
+        };
+        self.common
+            .fd
+            .enable_cap(&cap)
+            .map_err(KvmVmError::DisablePmu)
     }
 
     /// Post-vCPU creation setup.

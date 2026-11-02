@@ -1488,6 +1488,13 @@ definitions:
           Which huge pages configuration should be used to back guest memory.
           "None" uses regular 4K pages. "Transparent" enables THP via
           madvise(MADV_HUGEPAGE). "2M" uses explicit hugetlbfs 2MB pages.
+      pmu:
+        type: boolean
+        default: false
+        description: >-
+          Expose the host's performance monitoring unit (hardware performance
+          counters) to the guest. Off by default: the VM is created with KVM's
+          vPMU disabled. Only supported on x86_64.
 
   MemoryBackend:
     type: object
