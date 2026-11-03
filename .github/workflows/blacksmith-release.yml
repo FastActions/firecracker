@@ -20,11 +20,14 @@ on:
       - "v*-bs*"
   workflow_dispatch:
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   build:
+    # The build runs third-party build scripts and proc-macros inside the
+    # devctr, so it gets a read-only token; only `release` can write.
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -35,9 +38,15 @@ jobs:
             runner: blacksmith-8vcpu-ubuntu-2404-arm
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Build release binaries (devctr, static musl)
+        env:
+          # tools/devtool pulls fcuvm:${DEVCTR_IMAGE_TAG}; the digest pins the
+          # v93 multi-arch index so a re-pushed tag cannot change the toolchain.
+          DEVCTR_IMAGE_TAG: v93@sha256:36d81dd62f79c2f3ae5f97429d4c1504999539daa27c4797c993efc799702720
         run: tools/devtool -y build --release
 
       - name: Package
@@ -61,7 +70,7 @@ jobs:
             && sha256sum "firecracker-${VERSION}-${ARCH}.tgz" > "firecracker-${VERSION}-${ARCH}.tgz.sha256.txt" \
             && cat "firecracker-${VERSION}-${ARCH}.tgz.sha256.txt")
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: firecracker-${{ matrix.arch }}
           path: |
@@ -73,8 +82,10 @@ jobs:
     if: github.ref_type == 'tag'
     needs: build
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
           merge-multiple: true
