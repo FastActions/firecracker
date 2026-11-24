@@ -17,7 +17,7 @@ use crate::devices::virtio::ActivateError;
 use crate::devices::virtio::block::CacheType;
 use crate::devices::virtio::device::{ActiveState, DeviceState, VirtioDevice, VirtioDeviceType};
 use crate::devices::virtio::generated::virtio_blk::{
-    VIRTIO_BLK_F_DISCARD, VIRTIO_BLK_F_FLUSH, VIRTIO_BLK_F_RO,
+    VIRTIO_BLK_F_DISCARD, VIRTIO_BLK_F_FLUSH, VIRTIO_BLK_F_RO, VIRTIO_BLK_F_SEG_MAX,
 };
 use crate::devices::virtio::generated::virtio_config::VIRTIO_F_VERSION_1;
 use crate::devices::virtio::generated::virtio_ring::VIRTIO_RING_F_EVENT_IDX;
@@ -47,7 +47,12 @@ const AVAILABLE_FEATURES: u64 = (1 << VIRTIO_F_VERSION_1)
     // Offer discard to the backend; it is only exposed to the guest if the
     // backend acks it, and the backend also owns the discard limits in the
     // config space (max_discard_sectors, max_discard_seg, alignment).
-    | (1 << VIRTIO_BLK_F_DISCARD);
+    | (1 << VIRTIO_BLK_F_DISCARD)
+    // Offer the backend's segment limit. Without it the guest driver
+    // builds every request from a single data segment, so a write
+    // spanning non-contiguous guest pages becomes one request per run.
+    // The backend owns seg_max in the config space.
+    | (1 << VIRTIO_BLK_F_SEG_MAX);
 
 /// Use this structure to set up the Block Device before booting the kernel.
 #[derive(Debug, PartialEq, Eq)]
